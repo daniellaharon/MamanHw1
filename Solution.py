@@ -457,6 +457,57 @@ def addDiskAndFile(disk: Disk, file: File) -> Status:
 
 
 def addFileToDisk(file: File, diskID: int) -> Status:
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+                        # if the file doesn't exist in File() relation, this will make sure we will get a FK exception
+                        "INSERT INTO FilesInDisk(disk_id, file_id) "
+                        "VALUES({disk_id} ,{file_id});"
+                        # deleting the tuple (added just for the check)
+                        "DELETE FROM FilesInDisk "
+                        "WHERE  FilesInDisk.disk_id = {disk_id} "
+                        "AND  FilesInDisk.file_id = {file_id};"
+
+                        "INSERT INTO FilesInDisk(file_id, disk_id) "
+                        "(SELECT File.file_id, Disk.disk_id "
+                        "FROM File, Disk "
+                        "WHERE Disk.disk_id = {disk_id} AND File.file_id = {file_id}"
+                        "AND File.file_size <= Disk.disk_free_space); "
+
+                        # changing the free space in the disk after the insert (only if we successfully added the file)
+                        "UPDATE Disk"
+                        "SET disk_free_space = "
+                        "disk_free_space - "
+                        "(SELECT SUM(File.file_size)"
+                        "FROM File"  # file_size is available only in File relation
+                        "WHERE File.file_id = {file_id})"
+                        "WHERE Disk.disk_id = {disk_id}"
+                        "AND EXISTS (SELECT file_id "
+                        "FROM File "
+                        "WHERE File.file_id = {file_id});"
+
+                        "COMMIT;").format(disk_id=sql.Literal(diskID), file_id=sql.Literal(file.getFileID()))
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+
+    except DatabaseException.NOT_NULL_VIOLATION:
+        return Status.NOT_EXISTS
+    except DatabaseException.FOREIGN_KEY_VIOLATION:  # if file_id or disk_id doesnt exist
+        return Status.NOT_EXISTS
+    except DatabaseException.UNIQUE_VIOLATION:  # if file_id already is on disk_id
+        return Status.ALREADY_EXISTS
+    except DatabaseException.CHECK_VIOLATION:  # file_size id greater than disk_free_space
+        return Status.BAD_PARAMS
+    except DatabaseException.ConnectionInvalid:
+        return Status.ERROR
+    except DatabaseException.UNKNOWN_ERROR:
+        return Status.BAD_PARAMS
+    except Exception as e:
+        return Status.BAD_PARAMS
+
+    finally:
+        conn.close
     return Status.OK
 
 
@@ -554,7 +605,7 @@ def diskTotalRAM(diskID: int) -> int:
                         "(SELECT ram_id "
                         "FROM RAMInDisk "
                         "WHERE disk_id={disk_id} "
-                        "GROUP BY disk_id,ram_id").format(disk_id=sql.Literal(diskID)) # maybe add HAVING here
+                        "GROUP BY disk_id,ram_id").format(disk_id=sql.Literal(diskID))  # maybe add HAVING here
         rows_effected, result = conn.execute(query)
         conn.commit()
 
