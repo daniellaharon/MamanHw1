@@ -461,7 +461,8 @@ def addFileToDisk(file: File, diskID: int) -> Status:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
-                        # if the file doesn't exist in File() relation, this will make sure we will get a FK exception
+                        # if the file doesn't exist in File() relation or disk_id in Disk relation,
+                        # this will make sure we will get a FK exception
                         "INSERT INTO FilesInDisk(disk_id, file_id) "
                         "VALUES({disk_id} ,{file_id});"
                         # deleting the tuple (added just for the check)
@@ -518,22 +519,31 @@ def removeFileFromDisk(file: File, diskID: int) -> Status:
 # check return values here and also the correctness of the sql query
 def addRAMToDisk(ramID: int, diskID: int) -> Status:
     conn = None
-    rows_effected = 0
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL(
-            "INSERT INTO RAMInDisk(disk_id, ram_id) "
-            "(SELECT Disk.disk_id RAM.ram_id "
-            "FROM Disk, RAM "
-            "WHERE Disk.disk_id = {disk_id} AND RAM.ram_id = {ram_id});"
+        query = sql.SQL("BEGIN;"
+                        # if the ram_id doesn't exist in RAM() relation or disk_id in Disk() relation,
+                        # this will make sure we will get a FK exception
+                        "INSERT INTO RAMInDisk(disk_id , ram_id) "
+                        "VALUES({disk_id} , {ram_id});"
+                        # deleting the tuple (added just for the check)
+                        "DELETE FROM RAMInDisk "
+                        "WHERE  RAMInDisk.disk_id = {disk_id} "
+                        "AND  RAMInDisk.ram_id = {ram_id};"
+                        
+                        "INSERT INTO RAMInDisk(disk_id, ram_id) "
+                        "(SELECT Disk.disk_id RAM.ram_id "
+                        "FROM Disk, RAM "
+                        "WHERE Disk.disk_id = {disk_id} AND RAM.ram_id = {ram_id});"
 
-            "COMMIT").format(disk_id=sql.Literal(diskID),
-                             ram_id=sql.Literal(ramID))
+                        "COMMIT").format(disk_id=sql.Literal(diskID) , ram_id=sql.Literal(ramID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
-    except DatabaseException.FOREIGN_KEY_VIOLATION:
+    except DatabaseException.FOREIGN_KEY_VIOLATION: # if ram_id or disk_id doesnt exist
         return Status.NOT_EXISTS
-    except DatabaseException.UNIQUE_VIOLATION:
+    except DatabaseException.NOT_NULL_VIOLATION:
+        return Status.NOT_EXISTS
+    except DatabaseException.UNIQUE_VIOLATION: # if ram_id is already a part of disk_id
         return Status.ALREADY_EXISTS
     except DatabaseException.ConnectionInvalid:
         return Status.ERROR
@@ -541,9 +551,9 @@ def addRAMToDisk(ramID: int, diskID: int) -> Status:
         return Status.BAD_PARAMS
     except DatabaseException.CHECK_VIOLATION:
         return Status.BAD_PARAMS
-
     except Exception as e:
         return Status.BAD_PARAMS
+
     finally:
         conn.close()
     return Status.OK
