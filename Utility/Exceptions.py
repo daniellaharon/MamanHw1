@@ -16,7 +16,6 @@ class DatabaseException(_Exceptions):
 
     class FOREIGN_KEY_VIOLATION(_Exceptions):
         pass
-
     class UNIQUE_VIOLATION(_Exceptions):
         pass
 
