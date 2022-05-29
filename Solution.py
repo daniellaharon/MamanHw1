@@ -150,7 +150,7 @@ def addFile(file: File) -> Status:
     conn = None
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("INSERT INTO File(file_id,file_type,file_size) "
+        query = sql.SQL("INSERT INTO File(file_id, file_type, file_size) "
                         "VALUES({id},{type},{size})").format(id=sql.Literal(file.getFileID()),
                                                              type=sql.Literal(file.getType()),
                                                              size=sql.Literal(file.getSize()))
@@ -462,10 +462,10 @@ def addFileToDisk(file: File, diskID: int) -> Status:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
                         # if the file doesn't exist in File() relation or disk_id in Disk relation,
-                        # this will make sure we will get a FK exception
+                        # this will make sure we will get a Foreign Key exception
                         "INSERT INTO FilesInDisk(disk_id, file_id) "
                         "VALUES({disk_id} ,{file_id});"
-                        # deleting the tuple (added just for the check)
+                        # deleting the tuple (added just for the FK check)
                         "DELETE FROM FilesInDisk "
                         "WHERE  FilesInDisk.disk_id = {disk_id} "
                         "AND  FilesInDisk.file_id = {file_id};"
@@ -481,7 +481,7 @@ def addFileToDisk(file: File, diskID: int) -> Status:
                         "SET disk_free_space = "
                         "disk_free_space - "
                         "(SELECT SUM(File.file_size)"
-                        "FROM File"  # file_size is available only in File relation
+                        "FROM File"  # file_size is available only in File table
                         "WHERE File.file_id = {file_id})"
                         "WHERE Disk.disk_id = {disk_id}"
                         "AND EXISTS (SELECT file_id "
@@ -523,10 +523,10 @@ def addRAMToDisk(ramID: int, diskID: int) -> Status:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
                         # if the ram_id doesn't exist in RAM() relation or disk_id in Disk() relation,
-                        # this will make sure we will get a FK exception
+                        # this will make sure we will get a Foreign Key exception
                         "INSERT INTO RAMInDisk(disk_id , ram_id) "
                         "VALUES({disk_id} , {ram_id});"
-                        # deleting the tuple (added just for the check)
+                        # deleting the tuple (added just for the FK check)
                         "DELETE FROM RAMInDisk "
                         "WHERE  RAMInDisk.disk_id = {disk_id} "
                         "AND  RAMInDisk.ram_id = {ram_id};"
@@ -563,7 +563,7 @@ def removeRAMFromDisk(ramID: int, diskID: int) -> Status:
     return Status.OK
 
 
-# return values and corretness
+# return values and correctness,  # maybe add HAVING here
 # NOT DONE
 def averageFileSizeOnDisk(diskID: int) -> float:
     conn = None
@@ -602,7 +602,7 @@ def averageFileSizeOnDisk(diskID: int) -> float:
     return 0
 
 
-# return values and corretness
+# return values and correctness,  # maybe add HAVING here
 # NOT DONE
 def diskTotalRAM(diskID: int) -> int:
     conn = None
@@ -639,13 +639,105 @@ def diskTotalRAM(diskID: int) -> int:
 
     return 0
 
-
+# check if the JOIN is right
 def getCostForType(type: str) -> int:
+    # Returns the total amount of money paid (cost per unit * size) for saving type files across all disks.
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+                        
+                        # creating a view of IDs and sizes of FILES from the file_type specified.
+                        "CREATE VIEW files_id_size AS"
+                        "SELECT file_id, file_size"
+                        "FROM File"
+                        "GROUP BY file_type, file_id"
+                        "HAVING file_type = {file_type);"
+                        
+                        # creating a view of IDs of cost_per_byte of DISKS 
+                        "CREATE VIEW disks_id_cost_per_byte AS"
+                        "SELECT disk_id, disk_cost_per_byte"
+                        "FROM Disk;"
+                        
+                        # three-way INNER-JOIN to get a view of file_size of the files from the specified type
+                        # and disk_cost_per_byte of the disk the files are on.
+                        "CREATE VIEW fileSizes_diskCosts AS"
+                        "SELECT file_size, disk_cost_per_byte "
+                        "FROM ((FilesInDisk"
+                        "INNER JOIN files_id_size ON FilesInDisk.file_id = files_id_size.file_id)"
+                        "INNER JOIN disks_id_cost_per_byte ON FilesInDisk.disk_id = disks_id_cost_per_byte.disk_id)"
+                        
+                        "SELECT SUM(file_size * disk_cost_per_byte) "
+                        "FROM fileSizes_diskCosts"
+
+                        "COMMIT;").format(file_type=sql.Literal(type))
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+
+    except DatabaseException.ConnectionInvalid:
+        return -1
+    except DatabaseException.NOT_NULL_VIOLATION:
+        return -1
+    except DatabaseException.CHECK_VIOLATION:
+        return -1
+    except DatabaseException.UNIQUE_VIOLATION:
+        return -1
+    except DatabaseException.FOREIGN_KEY_VIOLATION:
+        return -1
+    except Exception as e:
+        return -1
+
+    finally:
+        # will happen any way after try termination or exception handling
+        conn.close()
+
+    if res.rows[0][0] is not None:
+        return res.rows[0][0]
+
     return 0
 
 
 def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
-    return []
+    # Returns a List (up to size 5) of files’ IDs that can be added to the disk with diskID as singles - not all
+    # together (even if they’re already on the disk). The list should be ordered by IDs in descending order.
+
+    conn = None
+    rows_effected = 0
+    res = Connector.ResultSet()
+
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("SELECT file_id "
+                        "FROM File "
+                        "WHERE File.file_size <= "
+                        "(SELECT SUM(disk_free_space) "
+                        "FROM Disk "
+                        "WHERE Disk.disk_id = {disk_id}) "
+                        "ORDER BY file_id DESC LIMIT 5").format(disk_id=sql.Literal(diskID))
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid:
+        return []
+    except DatabaseException.NOT_NULL_VIOLATION:
+        return []
+    except DatabaseException.CHECK_VIOLATION:
+        return []
+    except DatabaseException.UNIQUE_VIOLATION:
+        return []
+    except DatabaseException.FOREIGN_KEY_VIOLATION:
+        return []
+    except Exception as e:
+        return []
+
+    finally:
+        # will happen any way after try termination or exception handling
+        conn.close()
+
+    # making a list out of the tuples in res
+    res_list = []
+    for row in res.rows:
+        res_list.append(int(row[0]))
+    return res_list
 
 
 def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
