@@ -210,8 +210,64 @@ def getFileByID(fileID: int) -> File:
             return File(result.rows[0]["file_id"], result.rows[0]["file_type"], result.rows[0]["file_size"])
         return File.badFile()
 
-
+# DONE
 def deleteFile(file: File) -> Status:
+    conn = None
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+
+                        # contains the size of the file with file_id
+                        "CREATE VIEW size_of_file AS "
+                        "SELECT file_size "
+                        "FROM File"
+                        "WHERE file_id = {file_id}; "
+
+                        # if the file is on any of the disks, the disk_id will be in this view
+                        "CREATE VIEW disk_contains_file AS "
+                        "SELECT disk_id "
+                        "FROM FilesInDisk "
+                        "WHERE file_id = {file_id}; "
+
+                        # updating the free space of the disk after the deletion of file from it
+                        "UPDATE Disk "
+                        "SET disk_free_space = "
+                        "disk_free_space + "
+                        "(SELECT SUM(file_size) FROM size_of_file) "
+                        "WHERE Disk.disk_id IN "
+                        "(SELECT disk_id FROM disk_contains_file);"
+
+                        # deleting the file_id tuple from the File relation.
+                        # will be deleted from the FilesInDisk too, as we defined the table with ON DELETE CASCADE"
+                        "DELETE FROM File "
+                        "WHERE  file_id = {file_id} ;"
+
+                        "COMMIT;").format(file_id=sql.Literal(file.getFileID()))
+
+        conn.execute(query)
+        conn.commit()
+
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return Status.ERROR
+    except DatabaseException.NOT_NULL_VIOLATION as e:  # file does not exist so the return value is OK
+        print(e)
+        return Status.OK
+    except DatabaseException.CHECK_VIOLATION as e:  # file does not exist so the return value is OK
+        print(e)
+        return Status.OK
+    except DatabaseException.UNIQUE_VIOLATION as e:  # file does not exist so the return value is OK
+        print(e)
+        return Status.OK
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:  # file does not exist so the return value is OK
+        print(e)
+        return Status.OK
+    except Exception as e:
+        print(e)
+        return Status.ERROR
+    finally:
+        # will happen any way after code try termination or exception handling
+        conn.close()
     return Status.OK
 
 
@@ -287,15 +343,18 @@ def getDiskByID(diskID: int) -> Disk:
         return Disk.badDisk()
 
 
+# check return values and correctness
 # NOT DONE
 def deleteDisk(diskID: int) -> Status:
     conn = None
-    rows_effected, result = 0, Connector.ResultSet()
+    rows_effected, res = 0, Connector.ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM Disk WHERE Disk.disk_id={id}").format(id=sql.Literal(diskID))
-        rows_effected, _ = conn.execute(query)
+        query = sql.SQL("DELETE FROM Disk "
+                        "WHERE Disk.disk_id = {disk_id}").format(disk_id=sql.Literal(diskID))
+        rows_effected, res = conn.execute(query)
         conn.commit()
+
     except DatabaseException.ConnectionInvalid as e:
         return Status.ERROR
     except DatabaseException.NOT_NULL_VIOLATION as e:
@@ -382,14 +441,16 @@ def getRAMByID(ramID: int) -> RAM:
         return RAM.badRAM()
 
 
+# check return values and correctness
 # NOT DONE
 def deleteRAM(ramID: int) -> Status:
     conn = None
-    rows_effected, result = 0, Connector.ResultSet()
+    rows_effected, res = 0, Connector.ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("DELETE FROM RAM WHERE RAM.ram_id={id}").format(id=sql.Literal(ramID))
-        rows_effected, _ = conn.execute(query)
+        query = sql.SQL("DELETE FROM RAM "
+                        "WHERE RAM.RAM_id = {RAM_id}").format(id=sql.Literal(ramID))
+        rows_effected, res = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
         return Status.ERROR
@@ -455,7 +516,7 @@ def addDiskAndFile(disk: Disk, file: File) -> Status:
         conn.close()
     return Status.OK
 
-
+# DONE
 def addFileToDisk(file: File, diskID: int) -> Status:
     conn = None
     try:
@@ -530,20 +591,20 @@ def addRAMToDisk(ramID: int, diskID: int) -> Status:
                         "DELETE FROM RAMInDisk "
                         "WHERE  RAMInDisk.disk_id = {disk_id} "
                         "AND  RAMInDisk.ram_id = {ram_id};"
-                        
+
                         "INSERT INTO RAMInDisk(disk_id, ram_id) "
                         "(SELECT Disk.disk_id RAM.ram_id "
                         "FROM Disk, RAM "
                         "WHERE Disk.disk_id = {disk_id} AND RAM.ram_id = {ram_id});"
 
-                        "COMMIT").format(disk_id=sql.Literal(diskID) , ram_id=sql.Literal(ramID))
+                        "COMMIT").format(disk_id=sql.Literal(diskID), ram_id=sql.Literal(ramID))
         rows_effected, _ = conn.execute(query)
         conn.commit()
-    except DatabaseException.FOREIGN_KEY_VIOLATION: # if ram_id or disk_id doesnt exist
+    except DatabaseException.FOREIGN_KEY_VIOLATION:  # if ram_id or disk_id doesnt exist
         return Status.NOT_EXISTS
     except DatabaseException.NOT_NULL_VIOLATION:
         return Status.NOT_EXISTS
-    except DatabaseException.UNIQUE_VIOLATION: # if ram_id is already a part of disk_id
+    except DatabaseException.UNIQUE_VIOLATION:  # if ram_id is already a part of disk_id
         return Status.ALREADY_EXISTS
     except DatabaseException.ConnectionInvalid:
         return Status.ERROR
@@ -639,26 +700,28 @@ def diskTotalRAM(diskID: int) -> int:
 
     return 0
 
+
 # check if the JOIN is right
+# DONE
 def getCostForType(type: str) -> int:
     # Returns the total amount of money paid (cost per unit * size) for saving type files across all disks.
     conn = None
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
-                        
+
                         # creating a view of IDs and sizes of FILES from the file_type specified.
                         "CREATE VIEW files_id_size AS"
                         "SELECT file_id, file_size"
                         "FROM File"
                         "GROUP BY file_type, file_id"
                         "HAVING file_type = {file_type);"
-                        
+
                         # creating a view of IDs of cost_per_byte of DISKS 
                         "CREATE VIEW disks_id_cost_per_byte AS"
                         "SELECT disk_id, disk_cost_per_byte"
                         "FROM Disk;"
-                        
+
                         # three-way INNER-JOIN to get a view of file_size of the files from the specified type
                         # and disk_cost_per_byte of the disk the files are on.
                         "CREATE VIEW fileSizes_diskCosts AS"
@@ -666,7 +729,7 @@ def getCostForType(type: str) -> int:
                         "FROM ((FilesInDisk"
                         "INNER JOIN files_id_size ON FilesInDisk.file_id = files_id_size.file_id)"
                         "INNER JOIN disks_id_cost_per_byte ON FilesInDisk.disk_id = disks_id_cost_per_byte.disk_id)"
-                        
+
                         "SELECT SUM(file_size * disk_cost_per_byte) "
                         "FROM fileSizes_diskCosts"
 
@@ -697,6 +760,7 @@ def getCostForType(type: str) -> int:
     return 0
 
 
+# DONE
 def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
     # Returns a List (up to size 5) of files’ IDs that can be added to the disk with diskID as singles - not all
     # together (even if they’re already on the disk). The list should be ordered by IDs in descending order.
@@ -744,7 +808,72 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
     return []
 
 
+# should check if the disk_id exist in Disk relation??
 def isCompanyExclusive(diskID: int) -> bool:
+    # Returns whether the disk with diskID is manufactured by the same company as all its RAMs
+    conn = None
+    rows_effected = 0
+    res = Connector.ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+                        # should check if the disk_id exist in Disk relation??
+
+                        # creating a view of the companies of all RAMs in the disk with disk_id
+                        "CREATE VIEW company_of_ramInDisk AS "
+                        "SELECT DISTINCT ram_company "
+                        "FROM RAM "
+                        "WHERE RAM.ram_id IN "
+                        "(SELECT ram_id "
+                        "FROM RAMInDisk "
+                        "GROUP BY disk_id, ram_id "
+                        "HAVING disk_id = {disk_id}); "
+
+                        # creating a table of the company names of the manufacturers of the disks
+                        "CREATE VIEW company_of_disks AS "
+                        "SELECT disk_manufacturing_company "
+                        "FROM Disk"
+                        "WHERE Disk.disk_id = {disk_id};"
+
+                        # a view of all the companies that are different between the disks and rams
+                        "CREATE VIEW result_view AS "
+                        "SELECT disk_manufacturing_company "
+                        "FROM company_of_disks, company_of_ramInDisk "
+                        "WHERE company_of_disks.disk_manufacturing_company != company_of_ramInDisk.ram_company;"
+                        # counting the different companies. 
+                        # if zero - all the rams on disk are from the same company as the disk itself
+                        "SELECT COUNT(disk_manufacturing_company) "
+                        "FROM result_view "
+                        "COMMIT;").format(disk_id=sql.Literal(diskID))
+
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return False
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        print(e)
+        return False
+    except DatabaseException.CHECK_VIOLATION as e:
+        print(e)
+        return False
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        print(e)
+        return False
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        print(e)
+        return False
+    except Exception as e:
+        print(e)
+        return False
+    finally:
+        # will happen any way after try termination or exception handling
+        conn.close()
+
+    if res.rows[0][0] != 0:  # NOT ALL the rams on disk are from the same company as the disk itself.
+        return False
+
     return True
 
 
