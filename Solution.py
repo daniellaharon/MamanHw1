@@ -799,8 +799,9 @@ def getCostForType(type: str) -> int:
                         "INNER JOIN files_id_size ON FilesInDisk.file_id = files_id_size.file_id) "
                         "INNER JOIN disks_id_cost_per_byte ON FilesInDisk.disk_id = disks_id_cost_per_byte.disk_id); "
 
-                        "SELECT SUM(file_size * disk_cost_per_byte) "
-                        "FROM fileSizes_diskCosts; "
+                        "SELECT SUM(size) "
+                        "FROM (SELECT file_size * disk_cost_per_byte AS size "
+                        "FROM fileSizes_diskCosts) "
 
                         "COMMIT ").format(file_type=sql.Literal(type))
         rows_effected, res = conn.execute(query)
@@ -823,7 +824,7 @@ def getCostForType(type: str) -> int:
         # will happen any way after try termination or exception handling
         conn.close()
 
-    if rows_effected != 0:
+    if res.rows[0][0] is not None:
         return res.rows[0][0]
 
     return 0
