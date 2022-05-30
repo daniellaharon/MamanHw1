@@ -886,11 +886,18 @@ def isCompanyExclusive(diskID: int) -> bool:
     res = Connector.ResultSet()
     try:
         conn = Connector.DBConnector()
-        query = sql.SQL("BEGIN;"
-                        # should check if the disk_id exist in Disk relation??
+        query = sql.SQL("BEGIN; "
 
+                        # checking if the disk_id exists in the Disk relation
+                        "CREATE TABLE Check_for_disk_id( "
+                        "disk_id INTEGER, "
+                        "FOREIGN KEY (disk_id) REFERENCES Disk(disk_id)); "
+                        
+                        "INSERT INTO Check_for_disk_id(disk_id) VALUES({disk_id}); " 
+                        "DROP TABLE IF EXISTS Check_for_disk_id ;"
+                        
                         # creating a view of the companies of all RAMs in the disk with disk_id
-                        "CREATE VIEW company_of_ramInDisk AS "
+                        "CREATE OR REPLACE VIEW company_of_ramInDisk AS "
                         "SELECT DISTINCT ram_company "
                         "FROM RAM "
                         "WHERE RAM.ram_id IN "
@@ -900,21 +907,21 @@ def isCompanyExclusive(diskID: int) -> bool:
                         "HAVING disk_id = {disk_id}); "
 
                         # creating a table of the company names of the manufacturers of the disks
-                        "CREATE VIEW company_of_disks AS "
+                        "CREATE OR REPLACE VIEW company_of_disks AS "
                         "SELECT disk_manufacturing_company "
-                        "FROM Disk"
-                        "WHERE Disk.disk_id = {disk_id};"
+                        "FROM Disk "
+                        "WHERE Disk.disk_id = {disk_id}; "
 
                         # a view of all the companies that are different between the disks and rams
-                        "CREATE VIEW result_view AS "
+                        "CREATE OR REPLACE VIEW result_view AS "
                         "SELECT disk_manufacturing_company "
                         "FROM company_of_disks, company_of_ramInDisk "
-                        "WHERE company_of_disks.disk_manufacturing_company != company_of_ramInDisk.ram_company;"
+                        "WHERE company_of_disks.disk_manufacturing_company != company_of_ramInDisk.ram_company; "
                         # counting the different companies. 
                         # if zero - all the rams on disk are from the same company as the disk itself
                         "SELECT COUNT(disk_manufacturing_company) "
                         "FROM result_view "
-                        "COMMIT;").format(disk_id=sql.Literal(diskID))
+                        "COMMIT ").format(disk_id=sql.Literal(diskID))
 
         rows_effected, res = conn.execute(query)
         conn.commit()
