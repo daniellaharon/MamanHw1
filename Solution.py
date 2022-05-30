@@ -84,12 +84,7 @@ def clearTables():
     conn = None
     try:
         conn = Connector.DBConnector()
-        conn.execute("BEGIN;"
-                     "TRUNCATE File;"
-                     "TRUNCATE Disk;"
-                     "TRUNCATE RAM;"
-                     "TRUNCATE FilesInDisk;"
-                     "TRUNCATE RAMInDisk;")
+        conn.execute("TRUNCATE File, Disk,RAM ,FilesInDisk, RamInDisk")
         conn.commit()
     except DatabaseException.ConnectionInvalid:
         return Status.ERROR
@@ -207,8 +202,9 @@ def getFileByID(fileID: int) -> File:
     finally:
         conn.close()
         if len(result.rows):
-            return File(result.rows[0]["file_id"], result.rows[0]["file_type"], result.rows[0]["file_size"])
+            return File(result.rows[0][0], result.rows[0][1], result.rows[0][2])
         return File.badFile()
+
 
 # DONE
 def deleteFile(file: File) -> Status:
@@ -515,6 +511,7 @@ def addDiskAndFile(disk: Disk, file: File) -> Status:
     finally:
         conn.close()
     return Status.OK
+
 
 # DONE
 def addFileToDisk(file: File, diskID: int) -> Status:
@@ -878,10 +875,60 @@ def isCompanyExclusive(diskID: int) -> bool:
 
 
 def getConflictingDisks() -> List[int]:
+    # Returns a list containing conflicting disks' IDs (no duplicates).
+    # Disks are conflicting if and only if they save at least one identical file.
+    # The list should be ordered by diskIDs in ascending order.
+    conn = None
+    rows_effected, res = 0, Connector.ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+
+
+                        "COMMIT;")
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return []
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.CHECK_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        print(e)
+        return []
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+
+    res_list = []
+
+    if res.rows:  # res is not empty
+        for row in res.rows:
+            res_list.append(int(row[0]))
+        return res_list
+
+    # res is empty - didn't find anything, return empty list
     return []
 
 
 def mostAvailableDisks() -> List[int]:
+    # Returns a list of up to 5 disks' IDs that can save the most files (as singles).
+    # A disk can save a file if and only if the file’s size is not larger than the free space on disk
+    # (even if it’s already saved on the disk).
+    # The list should be ordered by:
+    # • Main sort by number of files in descending order.
+    # • Secondary sort by disk's speed in descending order.
+    # • Final sort by diskID in ascending order.
+
     return []
 
 
@@ -890,6 +937,9 @@ def getCloseFiles(fileID: int) -> List[int]:
 
 
 if __name__ == '__main__':
+    dropTables()
     createTables()
-    # dropTables()
-    # addFile(File(12, "test", 10))
+    addFile(File(12, "test", 10))
+    getFileByID(12)
+    clearTables()
+    getFileByID(12)
