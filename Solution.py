@@ -875,6 +875,43 @@ def getFilesCanBeAddedToDisk(diskID: int) -> List[int]:
 
 
 def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
+    conn = None
+    rows_effected, res = 0, Connector.ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
+
+                        "COMMIT;").format(disk_id=sql.Literal(diskID))
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return []
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.CHECK_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        print(e)
+        return []
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+
+    res_list = []
+    if res.rows:  # res is not empty
+        for row in res.rows:
+            res_list.append(int(row[0]))
+        return res_list
+
+    # res is empty - didn't find anything, return empty list
     return []
 
 
@@ -892,10 +929,10 @@ def isCompanyExclusive(diskID: int) -> bool:
                         "CREATE TABLE Check_for_disk_id( "
                         "disk_id INTEGER, "
                         "FOREIGN KEY (disk_id) REFERENCES Disk(disk_id)); "
-                        
-                        "INSERT INTO Check_for_disk_id(disk_id) VALUES({disk_id}); " 
+
+                        "INSERT INTO Check_for_disk_id(disk_id) VALUES({disk_id}); "
                         "DROP TABLE IF EXISTS Check_for_disk_id ;"
-                        
+
                         # creating a view of the companies of all RAMs in the disk with disk_id
                         "CREATE OR REPLACE VIEW company_of_ramInDisk AS "
                         "SELECT DISTINCT ram_company "
@@ -963,9 +1000,29 @@ def getConflictingDisks() -> List[int]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
+                        # creating a view containing file_id and number of DIFFERENT disks containing that file
+                        "CREATE OR REPLACE VIEW disk_sum_per_file AS "
+                        "SELECT file_id, COUNT(disk_id) "
+                        "FROM FilesInDisk "
+                        "GROUP BY file_id; "
 
-
-                        "COMMIT;")
+                        # get all the files that are in more than one disk 
+                        "CREATE OR REPLACE VIEW file_in_multi_disk AS "
+                        "SELECT file_id "
+                        "FROM disk_sum_per_file "
+                        "WHERE disk_sum_per_file.count > 1; "
+                        
+                        # order the not unique disks
+                        "CREATE OR REPLACE VIEW not_unique_disks AS "
+                        "SELECT disk_id "
+                        "FROM FilesInDisk "
+                        "WHERE file_id IN "
+                        "(SELECT file_id FROM file_in_multi_disk) "
+                        "ORDER BY disk_id ASC; "
+                        
+                        "SELECT * FROM not_unique_disks"
+                        
+                        "COMMIT")
         rows_effected, res = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:

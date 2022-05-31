@@ -720,7 +720,7 @@ class Test(AbstractTest):
         self.assertListEqual([], Solution.getFilesCanBeAddedToDisk(1), "Empty List in any other case")
         self.assertListEqual([11, 10, 9, 6, 2], Solution.getFilesCanBeAddedToDisk(2), "Shouldn't change")
 
-    def test_getFilesCanBeAddedToDiskAndRAM(self):
+    def test_getFilesCanBeAddedToDiskAndRAM(self):#DIDNT PASS
         # check database error
         Solution.dropTables()
         self.assertEqual([], Solution.getFilesCanBeAddedToDiskAndRAM(1), "Empty List in any other case")
@@ -850,7 +850,7 @@ class Test(AbstractTest):
         self.assertEqual(False, Solution.isCompanyExclusive(1), "Disk was deleted")
         self.assertEqual(False, Solution.isCompanyExclusive(2), "Shouldn't change")
 
-    def test_getConflictingDisks(self):
+    def test_getConflictingDisks(self):#DIDNT PASS
         # check database error
         Solution.dropTables()
         self.assertListEqual([], Solution.getConflictingDisks(), "Empty List in any other case")
@@ -898,7 +898,7 @@ class Test(AbstractTest):
         self.assertEqual(Status.OK, Solution.deleteDisk(2), "Should work")
         self.assertListEqual([1, 4], Solution.getConflictingDisks(), "Should work")
 
-    def test_mostAvailableDisks(self):
+    def test_mostAvailableDisks(self):#DIDNT PASS
         # check database error
         Solution.dropTables()
         self.assertListEqual([], Solution.mostAvailableDisks(), "Empty List in any other case")
@@ -951,7 +951,7 @@ class Test(AbstractTest):
         self.assertEqual(Status.OK, Solution.addDisk(Disk(6, "DELL", 1, 1, 1)), "Should work")
         self.assertListEqual([4, 5, 3, 2, 1], Solution.mostAvailableDisks(), "Shouldn't change")
 
-    def test_getCloseFiles(self):
+    def test_getCloseFiles(self):#DIDNT PASS
         # database error
         Solution.dropTables()
         self.assertListEqual([], Solution.getCloseFiles(1), "Empty List in any other case")
