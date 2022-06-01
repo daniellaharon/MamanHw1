@@ -881,7 +881,41 @@ def getFilesCanBeAddedToDiskAndRAM(diskID: int) -> List[int]:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN;"
 
+                        "CREATE OR REPLACE VIEW space_on_disk AS "
+                        "SELECT disk_free_space "
+                        "FROM Disk "
+                        "WHERE disk_id = {disk_id}; "
+
+                        "CREATE OR REPLACE VIEW rams_on_disk AS "
+                        "SELECT ram_id "
+                        "FROM RamInDisk "
+                        "GROUP BY disk_id, ram_id "
+                        "HAVING disk_id = {disk_id}; "
+
+                        "CREATE OR REPLACE VIEW size_of_rams AS "
+                        "SELECT ram_size "
+                        "FROM RAM "
+                        "INNER JOIN rams_on_disk "
+                        "ON RAM.ram_id = rams_on_disk.ram_id; "
+
+                        "CREATE OR REPLACE VIEW files_to_return AS "
+                        "SELECT file_id "
+                        "FROM File "
+                        "WHERE file_size <= COALESCE("
+                        "(SELECT SUM(disk_free_space) "
+                        "FROM space_on_disk),0) "
+                        "AND file_size <= COALESCE("
+                        "(SELECT SUM(ram_size) "
+                        "FROM size_of_rams),0); "
+
+                        "CREATE OR REPLACE VIEW res AS "
+                        "SELECT file_id "
+                        "FROM files_to_return "
+                        "ORDER BY file_id ASC LIMIT 5;"
+
+                        "SELECT * FROM res "
                         "COMMIT;").format(disk_id=sql.Literal(diskID))
+
         rows_effected, res = conn.execute(query)
         conn.commit()
     except DatabaseException.ConnectionInvalid as e:
@@ -1011,17 +1045,17 @@ def getConflictingDisks() -> List[int]:
                         "SELECT file_id "
                         "FROM disk_sum_per_file "
                         "WHERE disk_sum_per_file.count > 1; "
-                        
+
                         # order the not unique disks
                         "CREATE OR REPLACE VIEW not_unique_disks AS "
-                        "SELECT disk_id "
+                        "SELECT DISTINCT disk_id "
                         "FROM FilesInDisk "
                         "WHERE file_id IN "
                         "(SELECT file_id FROM file_in_multi_disk) "
                         "ORDER BY disk_id ASC; "
-                        
-                        "SELECT * FROM not_unique_disks"
-                        
+
+                        "SELECT * FROM not_unique_disks "
+
                         "COMMIT")
         rows_effected, res = conn.execute(query)
         conn.commit()
@@ -1065,21 +1099,145 @@ def mostAvailableDisks() -> List[int]:
     # • Main sort by number of files in descending order.
     # • Secondary sort by disk's speed in descending order.
     # • Final sort by diskID in ascending order.
+    conn = None
+    rows_effected, res = 0, Connector.ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN;"
 
+                        "CREATE OR REPLACE VIEW disk_id_disk_speed_num_of_files AS "
+                        "SELECT COUNT(file_id),disk_speed,disk_id "
+                        "FROM Disk "
+                        "LEFT JOIN File ON "
+                        "Disk.disk_free_space >= File.file_size "
+                        "GROUP BY Disk.disk_id; "
+
+                        "CREATE OR REPLACE VIEW most_available_disk AS "
+                        "SELECT count,disk_speed, disk_id "
+                        "FROM disk_id_disk_speed_num_of_files "
+                        "GROUP BY count,disk_speed, disk_id "
+                        "ORDER BY count DESC, disk_speed DESC, disk_id ASC LIMIT 5; "
+
+                        "SELECT disk_id "
+                        "FROM most_available_disk "
+                        
+                        "COMMIT;")
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return []
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.CHECK_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        print(e)
+        return []
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+
+    res_list = []
+    if res.rows:  # res is not empty
+        for row in res.rows:
+            res_list.append(int(row[0]))
+        return res_list
+
+    # res is empty - didn't find anything, return empty list
     return []
 
 
 def getCloseFiles(fileID: int) -> List[int]:
+    conn = None
+    rows_effected, res = 0, Connector.ResultSet()
+    try:
+        conn = Connector.DBConnector()
+        query = sql.SQL("BEGIN; "
+                        
+                        "CREATE OR REPLACE VIEW initialize_count_by_id AS "
+                        "SELECT file_id, 0 count "
+                        "FROM File "
+                        "WHERE File.file_id != {file_id} ;"
+                        
+                        "CREATE OR REPLACE VIEW disks_with_files AS "
+                        "SELECT disk_id "
+                        "FROM FilesInDisk "
+                        "GROUP BY file_id, disk_id "
+                        "HAVING file_id = {file_id}; "
+
+
+                        "CREATE OR REPLACE VIEW disk_count_by_file AS "
+                        "SELECT file_id, COUNT(disk_id) "
+                        "FROM FilesInDisk "
+                        "GROUP BY file_id, disk_id "
+                        "HAVING disk_id IN "
+                        "(SELECT disk_id "
+                        "FROM disks_with_files) AND "
+                        "file_id != {file_id}; "
+
+                        "CREATE OR REPLACE VIEW disks_with_at_least_one_file AS "
+                        "SELECT disk_count_by_file.file_id, COUNT(count) "
+                        "FROM disk_count_by_file "
+                        "GROUP BY file_id ;"
+
+                        "CREATE OR REPLACE VIEW distinct_file_id_count AS "
+                        "SELECT Distinct initialize_count_by_id.file_id, "
+                        "COALESCE((SELECT count "
+                        "FROM disks_with_at_least_one_file "
+                        "WHERE initialize_count_by_id.file_id = disks_with_at_least_one_file.file_id),0) count "
+                        "FROM initialize_count_by_id ;"
+
+                        "CREATE OR REPLACE VIEW divide_by_two AS "
+                        "SELECT file_id "
+                        "FROM distinct_file_id_count "
+                        "WHERE distinct_file_id_count.count >= "
+                        "(SELECT count(disk_id)/2.0 "
+                        "FROM disks_with_files); "
+
+                        "CREATE OR REPLACE VIEW res_view AS "
+                        "SELECT file_id "
+                        "FROM divide_by_two "
+                        "ORDER BY file_id ASC LIMIT 10;"
+
+                        "SELECT * FROM res_view "
+                        
+                        "COMMIT;").format(file_id=sql.Literal(fileID))
+        rows_effected, res = conn.execute(query)
+        conn.commit()
+    except DatabaseException.ConnectionInvalid as e:
+        print(e)
+        return []
+    except DatabaseException.NOT_NULL_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.CHECK_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.UNIQUE_VIOLATION as e:
+        print(e)
+        return []
+    except DatabaseException.FOREIGN_KEY_VIOLATION as e:
+        print(e)
+        return []
+    except Exception as e:
+        print(e)
+        return []
+    finally:
+        conn.close()
+
+    res_list = []
+    if res.rows:  # res is not empty
+        for row in res.rows:
+            res_list.append(int(row[0]))
+        return res_list
+
+    # res is empty - didn't find anything, return empty list
     return []
-
-#
-# if __name__ == '__main__':
-# if __name__ == '__main__':
-#     dropTables()
-#     createTables()
-#     dropTables()
-
-# addFile(File(12, "test", 10))
-# getFileByID(12)
-# clearTables()
-# getFileByID(12)
