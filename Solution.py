@@ -1115,18 +1115,31 @@ def getCloseFiles(fileID: int) -> List[int]:
     try:
         conn = Connector.DBConnector()
         query = sql.SQL("BEGIN; "
+                        
+                        # new table for the FK check of file_id, will throw an exception if the file_id is not in File()
+                        "CREATE TABLE Check_FK_file_id("
+                        "file_id INTEGER, "
+                        "FOREIGN KEY (file_id) REFERENCES File(file_id));"
 
+                        "INSERT INTO Check_FK_file_id(file_id) VALUES({file_id});"
+                        
+                        # deleting the table (was necessary only for check)
+                        "DROP TABLE IF EXISTS Check_FK_file_id ;"
+                        
+                        # 2 colomns - one with file_id's and the second filled with 0's (representing the count).
                         "CREATE OR REPLACE VIEW initialize_count_by_id AS "
                         "SELECT file_id, 0 count "
                         "FROM File "
                         "WHERE File.file_id != {file_id} ;"
-
+                        
+                        # a table of disks that have files on them
                         "CREATE OR REPLACE VIEW disks_with_files AS "
                         "SELECT disk_id "
                         "FROM FilesInDisk "
                         "GROUP BY file_id, disk_id "
                         "HAVING file_id = {file_id}; "
-
+                        
+                        
                         "CREATE OR REPLACE VIEW disk_count_by_file AS "
                         "SELECT file_id, COUNT(disk_id) "
                         "FROM FilesInDisk "
@@ -1135,8 +1148,9 @@ def getCloseFiles(fileID: int) -> List[int]:
                         "(SELECT disk_id "
                         "FROM disks_with_files) AND "
                         "file_id != {file_id}; "
-
-                        "CREATE OR REPLACE VIEW disks_with_at_least_one_file AS "
+                        
+                        # a table for files that are on at least one disk in the database
+                        "CREATE OR REPLACE VIEW files_in_at_least_one_disk AS "
                         "SELECT disk_count_by_file.file_id, COUNT(count) "
                         "FROM disk_count_by_file "
                         "GROUP BY file_id ;"
@@ -1144,17 +1158,19 @@ def getCloseFiles(fileID: int) -> List[int]:
                         "CREATE OR REPLACE VIEW distinct_file_id_count AS "
                         "SELECT Distinct initialize_count_by_id.file_id, "
                         "COALESCE((SELECT count "
-                        "FROM disks_with_at_least_one_file "
-                        "WHERE initialize_count_by_id.file_id = disks_with_at_least_one_file.file_id),0) count "
+                        "FROM files_in_at_least_one_disk "
+                        "WHERE initialize_count_by_id.file_id = files_in_at_least_one_disk.file_id),0) count "
                         "FROM initialize_count_by_id ;"
-
+                        
+                        # calculating the files which are saved on at least 50% of the disks the file with file_id is.
                         "CREATE OR REPLACE VIEW divide_by_two AS "
                         "SELECT file_id "
                         "FROM distinct_file_id_count "
                         "WHERE distinct_file_id_count.count >= "
                         "(SELECT count(disk_id)/2.0 "
                         "FROM disks_with_files); "
-
+                        
+                        # organizing the last table in the wanted order of tuples.
                         "CREATE OR REPLACE VIEW res_view AS "
                         "SELECT file_id "
                         "FROM divide_by_two "
